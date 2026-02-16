@@ -1,0 +1,32 @@
+---
+- name: Read CA cert
+  ansible.builtin.slurp:
+    src: "{{ pki_dir }}/ca.crt"
+  register: ca_crt_slurp
+
+- name: Read client cert
+  ansible.builtin.slurp:
+    src: "{{ pki_dir }}/issued/{{ ovpn_client }}.crt"
+  register: client_crt_slurp
+
+- name: Read client key
+  ansible.builtin.slurp:
+    src: "{{ pki_dir }}/private/{{ ovpn_client }}.key"
+  register: client_key_slurp
+
+- name: Read tls-crypt key
+  ansible.builtin.slurp:
+    src: "{{ pki_dir }}/tls-crypt.key"
+  register: tls_crypt_slurp
+
+- name: Render client ovpn
+  ansible.builtin.template:
+    src: client.ovpn.j2
+    dest: "/root/{{ ovpn_client }}.ovpn"
+    mode: "0600"
+  vars:
+    ca_crt: "{{ ca_crt_slurp.content | b64decode }}"
+    client_crt: "{{ client_crt_slurp.content | b64decode }}"
+    client_key: "{{ client_key_slurp.content | b64decode }}"
+    tls_crypt: "{{ tls_crypt_slurp.content | b64decode }}"
+    server_public_ip: "{{ server_public_ip }}"

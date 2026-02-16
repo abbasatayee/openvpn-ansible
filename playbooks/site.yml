@@ -1,0 +1,5 @@
+- name: Provision OpenVPN server
+  hosts: openvpn
+  become: true
+  roles:
+    - openvpn

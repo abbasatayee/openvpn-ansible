@@ -1,0 +1,180 @@
+---
+- name: Install OpenVPN and dependencies
+  ansible.builtin.apt:
+    name:
+      - openvpn
+      - easy-rsa
+      - iptables
+      - iptables-persistent
+      - netfilter-persistent
+    state: present
+    update_cache: true
+
+- name: Ensure OpenVPN log directory exists
+  ansible.builtin.file:
+    path: /var/log/openvpn
+    state: directory
+    mode: "0755"
+
+# If you don't set server_public_ip explicitly, use ansible_host from inventory
+- name: Set server_public_ip fallback
+  ansible.builtin.set_fact:
+    server_public_ip: "{{ ansible_host }}"
+  when: server_public_ip is not defined
+
+# --- Easy-RSA setup (idempotent, no make-cadir) ------------------------------
+
+- name: Ensure Easy-RSA directory exists
+  ansible.builtin.file:
+    path: "{{ easyrsa_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Check if Easy-RSA script exists
+  ansible.builtin.stat:
+    path: "{{ easyrsa_dir }}/easyrsa"
+  register: easyrsa_script
+
+- name: Populate Easy-RSA directory (copy skeleton) if missing
+  ansible.builtin.copy:
+    remote_src: true
+    src: /usr/share/easy-rsa/
+    dest: "{{ easyrsa_dir }}/"
+    mode: preserve
+  when: not easyrsa_script.stat.exists
+
+- name: Ensure easyrsa is executable
+  ansible.builtin.file:
+    path: "{{ easyrsa_dir }}/easyrsa"
+    mode: "0750"
+  when: easyrsa_script.stat.exists or true
+
+# IMPORTANT: Use Easy-RSA PKI location consistently
+# pki_dir SHOULD be set to: "{{ easyrsa_dir }}/pki" in defaults/main.yml
+# But we also ensure it exists here to avoid path errors.
+- name: Ensure PKI directory exists
+  ansible.builtin.file:
+    path: "{{ pki_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Initialize PKI (if not initialized)
+  ansible.builtin.command: "{{ easyrsa_dir }}/easyrsa init-pki"
+  args:
+    chdir: "{{ easyrsa_dir }}"
+    creates: "{{ pki_dir }}/private"
+
+- name: Build CA (non-interactive)
+  ansible.builtin.command: "{{ easyrsa_dir }}/easyrsa --batch build-ca nopass"
+  args:
+    chdir: "{{ easyrsa_dir }}"
+    creates: "{{ pki_dir }}/ca.crt"
+
+- name: Generate server request
+  ansible.builtin.command: "{{ easyrsa_dir }}/easyrsa --batch gen-req {{ openvpn_server_cn }} nopass"
+  args:
+    chdir: "{{ easyrsa_dir }}"
+    creates: "{{ pki_dir }}/reqs/{{ openvpn_server_cn }}.req"
+
+- name: Sign server certificate
+  ansible.builtin.command: "{{ easyrsa_dir }}/easyrsa --batch sign-req server {{ openvpn_server_cn }}"
+  args:
+    chdir: "{{ easyrsa_dir }}"
+    creates: "{{ pki_dir }}/issued/{{ openvpn_server_cn }}.crt"
+
+- name: Generate Diffie-Hellman params
+  ansible.builtin.command: "{{ easyrsa_dir }}/easyrsa gen-dh"
+  args:
+    chdir: "{{ easyrsa_dir }}"
+    creates: "{{ pki_dir }}/dh.pem"
+
+- name: Generate tls-crypt key
+  ansible.builtin.command: "openvpn --genkey secret {{ pki_dir }}/tls-crypt.key"
+  args:
+    creates: "{{ pki_dir }}/tls-crypt.key"
+
+# --- Client PKI (loop via include_tasks; no loop-on-block) -------------------
+
+- name: Generate client certs/keys
+  ansible.builtin.include_tasks: client_pki.yml
+  loop: "{{ openvpn_clients }}"
+  loop_control:
+    loop_var: ovpn_client
+
+# --- OpenVPN server config ---------------------------------------------------
+
+- name: Ensure /etc/openvpn/server exists (Debian/Ubuntu layout)
+  ansible.builtin.file:
+    path: /etc/openvpn/server
+    state: directory
+    mode: "0755"
+
+- name: Render OpenVPN server config
+  ansible.builtin.template:
+    src: server.conf.j2
+    dest: /etc/openvpn/server/server.conf
+    mode: "0644"
+  notify: Restart OpenVPN
+
+# --- Networking: forwarding + NAT -------------------------------------------
+
+- name: Enable IPv4 forwarding
+  ansible.builtin.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    state: present
+    reload: true
+
+- name: Check if NAT masquerade rule exists
+  ansible.builtin.command: >
+    iptables -t nat -C POSTROUTING -s {{ openvpn_network }}/24 -o {{ openvpn_wan_iface }} -j MASQUERADE
+  register: nat_rule_check
+  failed_when: false
+  changed_when: false
+
+- name: Add NAT masquerade rule
+  ansible.builtin.command: >
+    iptables -t nat -A POSTROUTING -s {{ openvpn_network }}/24 -o {{ openvpn_wan_iface }} -j MASQUERADE
+  when: nat_rule_check.rc != 0
+  notify: Save iptables
+
+# Optional: allow port via ufw if installed/enabled
+- name: Allow OpenVPN port in UFW (if ufw exists)
+  ansible.builtin.command: "ufw allow {{ openvpn_port }}/{{ openvpn_proto }}"
+  register: ufw_allow
+  failed_when: false
+  changed_when: "'Rules updated' in ufw_allow.stdout or 'Rules updated' in ufw_allow.stderr"
+
+# --- Service ----------------------------------------------------------------
+
+- name: Enable and start OpenVPN service (Debian/Ubuntu)
+  ansible.builtin.systemd:
+    name: openvpn-server@server
+    enabled: true
+    state: started
+
+# --- Build client .ovpn profiles + fetch them --------------------------------
+
+- name: Ensure artifacts directory exists on control machine
+  ansible.builtin.file:
+    path: artifacts
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Build client profiles on server
+  ansible.builtin.include_tasks: client_profile.yml
+  loop: "{{ openvpn_clients }}"
+  loop_control:
+    loop_var: ovpn_client
+
+- name: Fetch client profiles to local machine
+  ansible.builtin.fetch:
+    src: "/root/{{ ovpn_client }}.ovpn"
+    dest: "artifacts/{{ ovpn_client }}.ovpn"
+    flat: true
+  loop: "{{ openvpn_clients }}"
+  loop_control:
+    loop_var: ovpn_client

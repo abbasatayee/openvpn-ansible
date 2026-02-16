@@ -1,0 +1,12 @@
+---
+- name: Generate client request
+  ansible.builtin.command: "{{ easyrsa_dir }}/easyrsa --batch gen-req {{ ovpn_client }} nopass"
+  args:
+    chdir: "{{ easyrsa_dir }}"
+    creates: "{{ pki_dir }}/reqs/{{ ovpn_client }}.req"
+
+- name: Sign client certificate
+  ansible.builtin.command: "{{ easyrsa_dir }}/easyrsa --batch sign-req client {{ ovpn_client }}"
+  args:
+    chdir: "{{ easyrsa_dir }}"
+    creates: "{{ pki_dir }}/issued/{{ ovpn_client }}.crt"

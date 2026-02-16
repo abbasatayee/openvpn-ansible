@@ -1,0 +1,28 @@
+openvpn_proto: udp
+openvpn_port: 1194
+
+# VPN subnet (must not overlap with your LAN)
+openvpn_network: "10.8.0.0"
+openvpn_netmask: "255.255.255.0"
+
+# Network interface on the server that reaches the internet (often eth0, ens3, enp1s0, etc.)
+# You can discover it with: ip route | grep default
+openvpn_wan_iface: "eth0"
+
+# DNS pushed to clients
+openvpn_push_dns:
+  - "1.1.1.1"
+  - "8.8.8.8"
+
+# Client(s) to generate
+openvpn_clients:
+  - client1
+
+# Where Easy-RSA lives on Debian/Ubuntu
+easyrsa_dir: "/etc/openvpn/easy-rsa"
+
+pki_dir: "{{ easyrsa_dir }}/pki"
+
+
+# Server name for cert CN
+openvpn_server_cn: "server"

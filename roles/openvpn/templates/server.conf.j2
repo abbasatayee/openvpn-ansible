@@ -1,0 +1,38 @@
+port {{ openvpn_port }}
+proto {{ openvpn_proto }}
+dev tun
+
+user nobody
+group nogroup
+persist-key
+persist-tun
+
+# PKI
+ca {{ pki_dir }}/ca.crt
+cert {{ pki_dir }}/issued/{{ openvpn_server_cn }}.crt
+key {{ pki_dir }}/private/{{ openvpn_server_cn }}.key
+dh {{ pki_dir }}/dh.pem
+tls-crypt {{ pki_dir }}/tls-crypt.key
+
+topology subnet
+server {{ openvpn_network }} {{ openvpn_netmask }}
+
+# Push DNS
+{% for dns in openvpn_push_dns %}
+push "dhcp-option DNS {{ dns }}"
+{% endfor %}
+
+push "redirect-gateway def1 bypass-dhcp"
+
+keepalive 10 120
+cipher AES-256-GCM
+auth SHA256
+ncp-ciphers AES-256-GCM:AES-128-GCM
+
+verb 3
+
+# Allow client-to-client if desired (comment out to disable)
+;client-to-client
+
+# Enable status log
+status /var/log/openvpn/status.log

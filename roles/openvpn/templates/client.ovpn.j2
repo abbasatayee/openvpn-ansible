@@ -1,0 +1,29 @@
+client
+dev tun
+proto {{ openvpn_proto }}
+remote {{ server_public_ip }} {{ openvpn_port }}
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+remote-cert-tls server
+verb 3
+
+cipher AES-256-GCM
+auth SHA256
+
+<ca>
+{{ ca_crt }}
+</ca>
+
+<cert>
+{{ client_crt }}
+</cert>
+
+<key>
+{{ client_key }}
+</key>
+
+<tls-crypt>
+{{ tls_crypt }}
+</tls-crypt>
