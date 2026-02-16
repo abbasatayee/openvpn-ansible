@@ -97,3 +97,22 @@ inventory/host_vars/**/*.vault
 # Docker/container files with secrets
 .docker/
 docker-compose.override.yml
+
+# Terraform-specific
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.*
+terraform.tfvars
+terraform.tfvars.json
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.d/
